@@ -9,14 +9,10 @@
 #include "stdafx.h"
 #include "ReflectCpp.h"
 #include "windowsx.h"
-#include "functional"
-#include "memory"
 #include "vector"
+#include "memory"
 #include "string"
 #include "atlbase.h"
-#define _USE_MATH_DEFINES
-#include "math.h"
-
 //#include "commctrl.h"
 //#pragma comment(lib,"comctl32.lib")
 //#pragma comment(linker,"\"/manifestdependency:type                  = 'win32' \
@@ -35,7 +31,7 @@ HINSTANCE hInst;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 
-// Forward declarations of functions included in this code module:
+												// Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -44,145 +40,6 @@ class BounceFrame;
 BounceFrame *g_pBounceFrame;
 
 HWND g_hWnd;
-
-
-
-class MyBase
-{
-public:
-	static int g_nInstances;
-	static LONGLONG g_nTotalAllocated;
-	virtual int DoSomething() = 0;
-	void *_p;
-	int _size;
-	MyBase()
-	{
-		g_nInstances++;
-	}
-	virtual ~MyBase()
-	{
-		g_nInstances--;
-	};
-	void DoAllocation(int reqSize)
-	{
-		_ASSERT_EXPR(reqSize > 4, L"too small");
-		// put the Free's in the derived classes to demo virtual dtor
-		_p = malloc(reqSize);
-		_size = reqSize;
-		g_nTotalAllocated += reqSize;
-		_ASSERT_EXPR(_p != nullptr, L"Not enough memory");
-		*(int *)_p = reqSize;
-	}
-	void CheckSize()
-	{
-		if (_p != nullptr)
-		{
-			auto size = *((int *)_p);
-			_ASSERT_EXPR(_size == size, L"sizes don't match");
-		}
-	}
-};
-
-int MyBase::g_nInstances = 0;
-LONGLONG MyBase::g_nTotalAllocated = 0;
-
-class MyDerivedA :
-	public MyBase
-{
-public:
-	MyDerivedA()
-	{
-		DoAllocation(10000);
-	}
-	MyDerivedA(int reqSize)
-	{
-		DoAllocation(reqSize);
-	}
-	~MyDerivedA()
-	{
-		_ASSERT_EXPR(_p != nullptr, L"_p should be non-null");
-		CheckSize();
-		free(_p);
-		g_nTotalAllocated -= _size;
-		_p = nullptr;
-	}
-	int DoSomething()
-	{
-		CheckSize();
-		return 1;
-	}
-};
-
-class MyDerivedB :
-	public	MyBase
-{
-public:
-	MyDerivedB()
-	{
-		auto x = 2;
-		DoAllocation(10000);
-	}
-	MyDerivedB(int reqSize)
-	{
-		DoAllocation(reqSize);
-	}
-	~MyDerivedB()
-	{
-		_ASSERT_EXPR(_p != nullptr, L"_p should be non-null");
-		free(_p);
-		g_nTotalAllocated -= _size;
-		_p = nullptr;
-	}
-	int DoSomething()
-	{
-		return 2;
-	}
-};
-
-
-void DoTest()
-{
-	int numIter = 10;
-	vector<unique_ptr<MyBase >> vecUniquePtr;
-	for (int i = 0; i < numIter; i++)
-	{
-		vecUniquePtr.emplace_back(new MyDerivedA());
-		vecUniquePtr.emplace_back(new MyDerivedB());
-		vecUniquePtr.emplace_back(new MyDerivedA(123));
-		vecUniquePtr.emplace_back(new MyDerivedB(456));
-		//_ASSERT_EXPR(MyBase::g_nInstances == 4, L"should have 4 instances");
-		for (auto &x : vecUniquePtr)
-		{
-			x->DoSomething();
-		}
-		vecUniquePtr.clear();
-		_ASSERT_EXPR(MyBase::g_nInstances == 0, L"should have no instances");
-		_ASSERT_EXPR(MyBase::g_nTotalAllocated == 0, L"should have none allocated");
-	}
-
-	vector<shared_ptr<MyBase >> vecSharedPtr;
-	for (int i = 0; i < numIter; i++)
-	{
-		vecSharedPtr.emplace_back(new MyDerivedA());
-		vecSharedPtr.emplace_back(new MyDerivedB(111));
-		vecSharedPtr.emplace_back(new MyDerivedA());
-		vecSharedPtr.emplace_back(new MyDerivedB(222));
-		_ASSERT_EXPR(MyBase::g_nInstances == 4, L"should have 4 instances");
-		for (auto x : vecSharedPtr)
-		{
-			x->DoSomething();
-			auto y = x;
-			auto xx = dynamic_pointer_cast<MyDerivedA>(x);
-			if (xx != nullptr)
-			{
-				auto axx = "got da";
-			}
-		}
-		vecSharedPtr.clear();
-		_ASSERT_EXPR(MyBase::g_nInstances == 0, L"should have no instances");
-		_ASSERT_EXPR(MyBase::g_nTotalAllocated == 0, L"should have none allocated");
-	}
-}
 
 //
 //  FUNCTION: MyRegisterClass()
@@ -233,7 +90,7 @@ template <typename T> int sgn(T val) {
 }
 
 typedef double MyPrecision;
-const double epsilon = .00001;
+const double epsilon = .0001;
 const int SpeedMult = 1000;
 class MyPoint
 {
@@ -296,62 +153,33 @@ typedef MyPoint Vector; // as in physics vector with speed and direction
 
 interface IMirror
 {
-public:
-	virtual MyPoint IntersectingPoint(MyPoint ptcLight, Vector vecLight) = 0;
-	virtual Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect) = 0;
-	virtual void Draw(HDC hDC) = 0;
-	virtual bool IsNull() = 0;
-	virtual ~IMirror()
-	{
-
-	}
+	MyPoint IntersectingPoint(MyPoint ptcLight, Vector vecLight);
+	Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect);
+	void Draw(HDC hDC);
 };
 
-class CEllipse :
-	public IMirror
-{
-	void *p;
-	int foo;
-public:
-	CEllipse()
-	{
-		p = malloc(10000);
-		foo = 0x1234;
-	}
-	CEllipse(MyPoint ptopLeft, MyPoint pbottomRight, MyPoint ptStartArc, MyPoint ptEndArc)
-	{
-		p = malloc(10000);
-	}
-	MyPoint IntersectingPoint(MyPoint ptcLight, Vector vecLight)
-	{
-		return ptcLight;
-
-	}
-	Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect)
-	{
-		return vecLight;
-	}
-	void Draw(HDC hDC)
-	{
-
-	}
-	~CEllipse()
-	{
-		auto r = 2;
-		free(p);
-	}
-};
-
-
-class CLine :
-	public IMirror
+int g_instanceCount = 0;
+class CLine : IMirror
 {
 public:
-	CLine(MyPoint &pt0, MyPoint &pt1, bool IsLimitedInLength = true)
+	CLine()
 	{
+		g_instanceCount++;
+	}
+	CLine(MyPoint &pt0, MyPoint &pt1)
+	{
+		g_instanceCount++;
 		this->pt0 = pt0;
 		this->pt1 = pt1;
-		this->IsLimitedInLength = IsLimitedInLength;
+	}
+	~CLine()
+	{
+		g_instanceCount--;
+		auto x = 2;
+		this->pt0.X = 0;
+		this->pt0.Y = 0;
+		this->pt1.X = 0;
+		this->pt1.Y = 0;
 	}
 	MyPrecision LineLength()
 	{
@@ -370,49 +198,43 @@ public:
 		return pt1.Y - pt0.Y;
 	}
 
-	MyPoint IntersectingPoint(MyPoint ptLight, Vector vecLight)
+	MyPoint InterSectingPoint(MyPoint ptLight, Vector vecLight)
 	{
 		MyPoint ptIntersect;
 		CLine lnIncident(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
-		auto ptIntersectTest = IntersectingPoint(lnIncident);
+		auto ptIntersectTest = InterSectingPoint(lnIncident);
 		// the incident line intersects the mirror. Our mirrors have finite width
 		// let's see if the intersection point is within the mirror's edges
 		if (!ptIntersectTest.IsNull())
 		{
-			if (this->IsLimitedInLength)
+			if (pt0.DistanceFromPoint(ptIntersectTest) +
+				ptIntersectTest.DistanceFromPoint(pt1) - LineLength() < epsilon)
 			{
-				if (pt0.DistanceFromPoint(ptIntersectTest) +
-					ptIntersectTest.DistanceFromPoint(pt1) - LineLength() < epsilon)
+				if (vecLight.X == 0) // vert
 				{
-					if (abs(vecLight.X) < epsilon) // vert
+					auto ss = sgn(vecLight.Y);
+					auto s2 = sgn(ptIntersectTest.Y - ptLight.Y);
+					if (ss * s2 == 1) // in our direction?
 					{
-						auto ss = sgn(vecLight.Y);
-						auto s2 = sgn(ptIntersectTest.Y - ptLight.Y);
-						if (ss * s2 == 1) // in our direction?
-						{
-							ptIntersect = ptIntersectTest;
-						}
+						ptIntersect = ptIntersectTest;
 					}
-					else  // non-vertical
+				}
+				else  // non-vertical
+				{
+					auto ss = sgn(vecLight.X);
+					auto s2 = sgn(ptIntersectTest.X - ptLight.X);
+					if (ss * s2 == 1) // in our direction?
 					{
-						auto ss = sgn(vecLight.X);
-						auto s2 = sgn(ptIntersectTest.X - ptLight.X);
-						if (ss * s2 == 1) // in our direction?
-						{
-							ptIntersect = ptIntersectTest;
-						}
+						ptIntersect = ptIntersectTest;
 					}
 				}
 			}
-			else
-			{
-				ptIntersect = ptIntersectTest;
-			}
+
 		}
 		return ptIntersect;
 	}
 
-	MyPoint IntersectingPoint(CLine otherLine)
+	MyPoint InterSectingPoint(CLine otherLine)
 	{
 		MyPoint result;
 		auto denom = (this->pt0.X - this->pt1.X) * (otherLine.pt0.Y - otherLine.pt1.Y) - (this->pt0.Y - this->pt1.Y) * (otherLine.pt0.X - otherLine.pt1.X);
@@ -426,11 +248,11 @@ public:
 
 	Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect)
 	{
-		if (abs(pt0.X - pt1.X) < epsilon) // vertical line
+		if (pt0.X == pt1.X) // vertical line
 		{
 			vecLight.X = -vecLight.X;
 		}
-		else if (abs(pt0.Y - pt1.Y) < epsilon)// horiz line
+		else if (pt0.Y == pt1.Y) // horiz line
 		{
 			vecLight.Y = -vecLight.Y;
 		}
@@ -491,35 +313,18 @@ public:
 	}
 	MyPoint pt0;
 	MyPoint pt1;
-	bool IsLimitedInLength;
-	~CLine()
-	{
-
-	}
 };
 
-struct Laser
-{
-	Laser(MyPoint pt, Vector vec)
-	{
-		_ptLight = pt;
-		_vecLight = vec;
-	}
-	MyPoint _ptLight;
-	Vector _vecLight;
-};
 
 class BounceFrame
 {
 	CComAutoCriticalSection csLstMirrors;
 #define LOCKMirrors CComCritSecLock<CComAutoCriticalSection> lock(csLstMirrors)
-	vector<shared_ptr<IMirror>> _lstMirrors; // as in a List<MyLine>
+	vector<shared_ptr<CLine>> _lstMirrors; // as in a List<MyLine>
 #define  margin  5
 #define xScale 1
 #define yScale 1
 
-	int _nLasers = 10;
-	vector<shared_ptr<Laser>> _vecLasers;
 	MyPoint _frameSize; // size of drawing area
 	HPEN _clrLine;
 	HPEN _clrFillReflection;
@@ -535,8 +340,8 @@ class BounceFrame
 	int _nDelayMsecs = 0;
 	int _nBounces = 0;
 	DWORD _timeStartmSecs;
-	Vector _vecLightInit;
-	MyPoint _ptLightInit;
+	Vector _vecLight;
+	MyPoint _ptLight;
 	int _nOutofBounds;
 public:
 	BounceFrame()
@@ -599,10 +404,10 @@ private:
 	}
 	void ChooseRandomStartingRay()
 	{
-		_ptLightInit.X = (MyPrecision)(margin + (_frameSize.X - 2 * margin)* ((double)rand()) / RAND_MAX);
-		_ptLightInit.Y = (MyPrecision)(margin + (_frameSize.Y - 2 * margin)* ((double)rand()) / RAND_MAX);
-		_vecLightInit.X = 1;
-		_vecLightInit.Y = (MyPrecision)(((double)rand()) / RAND_MAX);
+		_ptLight.X = (MyPrecision)(margin + (_frameSize.X - 2 * margin)* ((double)rand()) / RAND_MAX);
+		_ptLight.Y = (MyPrecision)(margin + (_frameSize.Y - 2 * margin)* ((double)rand()) / RAND_MAX);
+		_vecLight.X = 1;
+		_vecLight.Y = (MyPrecision)(((double)rand()) / RAND_MAX);
 	}
 
 	void Clear(bool fKeepUserMirrors)
@@ -615,10 +420,10 @@ private:
 		_ptOldMouseDown.Clear();
 		_fPenDown = false;
 		_fPenModeDrag = false;
-		_ptLightInit.X = 140;
-		_ptLightInit.Y = 140;
-		_vecLightInit.X = 11;
-		_vecLightInit.Y = 10;
+		_ptLight.X = 140;
+		_ptLight.Y = 140;
+		_vecLight.X = 11;
+		_vecLight.Y = 10;
 		_nBounces = 0;
 		_nOutofBounds = 0;
 		_colorReflection = 0;
@@ -647,88 +452,72 @@ private:
 		int nLastBounceWhenStagnant = 0;
 		_timeStartmSecs = GetTickCount();
 		_nOutofBounds = 0;
-		_vecLasers.clear();
-		for (int i = 0; i < _nLasers; i++)
-		{
-			auto vec = Vector(_vecLightInit);
-			if (_nLasers > 1)
-			{
-				auto deltangle = 2 * M_PI / _nLasers;
-				auto angle = deltangle * i;
-				vec.X = SpeedMult * cos(angle);
-				vec.Y = SpeedMult * sin(angle);
-			}
-			_vecLasers.push_back(make_shared<Laser>(_ptLightInit, vec));
-		}
-
 		HDC hDC = GetDC(g_hWnd);
 		while (_fIsRunning && !_fCancelRequest)
 		{
-			for (auto laser : _vecLasers)
+			//MyPoint ptEndIncident(_ptLight.x + _vecLight.x, _ptLight.y + _vecLight.y);
+			//auto lnIncident = MyLine(_ptLight, ptEndIncident);
+			auto lnIncident = CLine(_ptLight, MyPoint(_ptLight.X + _vecLight.X, _ptLight.Y + _vecLight.Y));
+			auto minDist = 1000000.0;
+			shared_ptr<CLine> mirrorClosest;
+			MyPoint ptIntersect = { 0,0 };
 			{
-				auto ptLight = laser->_ptLight;
-				auto vecLight = laser->_vecLight;
-
-				//MyPoint ptEndIncident(_ptLight.x + _vecLight.x, _ptLight.y + _vecLight.y);
-				//auto lnIncident = MyLine(_ptLight, ptEndIncident);
-				auto lnIncident = CLine(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
-				auto minDist = 1000000.0;
-				shared_ptr<IMirror> mirrorClosest;
-				MyPoint ptIntersect = { 0,0 };
+				LOCKMirrors;
+				for (auto mirror : _lstMirrors)
 				{
-					LOCKMirrors;
-					for (auto mirror : _lstMirrors)
+					auto ptIntersectTest = mirror->InterSectingPoint(_ptLight, _vecLight);;
+					if (!ptIntersectTest.IsNull())
 					{
-						auto ptIntersectTest = mirror->IntersectingPoint(ptLight, vecLight);
-						if (!ptIntersectTest.IsNull())
-						{
-							auto dist = ptLight.DistanceFromPoint(ptIntersectTest);
+						auto dist = _ptLight.DistanceFromPoint(ptIntersectTest);
 
-							if (dist > epsilon && dist < minDist)
-							{
-								minDist = dist;
-								mirrorClosest = mirror;
-								ptIntersect = ptIntersectTest;
-							}
+						if (dist > epsilon && dist < minDist)
+						{
+							minDist = dist;
+							mirrorClosest = mirror;
+							ptIntersect = ptIntersectTest;
 						}
 					}
 				}
-				if (mirrorClosest == nullptr)
-				{
-					if (nLastBounceWhenStagnant == _nBounces)
-					{// both the last bounce and this bounce were stagnant
-						nLastBounceWhenStagnant = _nBounces;
-						_nOutofBounds++;
-						ChooseRandomStartingRay();
-					}
-					else
-					{
-						vecLight.X = -vecLight.X;
-						nLastBounceWhenStagnant = _nBounces;
-					}
-					continue;
+			}
+			if (mirrorClosest == nullptr)
+			{
+				if (nLastBounceWhenStagnant == _nBounces)
+				{// both the last bounce and this bounce were stagnant
+					nLastBounceWhenStagnant = _nBounces;
+					_nOutofBounds++;
+					ChooseRandomStartingRay();
 				}
-				// now draw incident line from orig pt to intersection
-				SelectObject(hDC, _clrFillReflection);
-				MoveToEx(hDC, (int)(xScale * ptLight.X), (int)(yScale * ptLight.Y), nullptr);
-				LineTo(hDC, (int)(xScale * ptIntersect.X), (int)(yScale * ptIntersect.Y));
+				else
+				{
+					_vecLight.X = -_vecLight.X;
+					nLastBounceWhenStagnant = _nBounces;
+				}
+				continue;
+			}
+			// now draw incident line from orig pt to intersection
+			SelectObject(hDC, _clrFillReflection);
+			if (_nBounces == 1)
+			{
+				MoveToEx(hDC, (int)(xScale * _ptLight.X), (int)(yScale * _ptLight.Y), nullptr);
+			}
+			LineTo(hDC, (int)(xScale * ptIntersect.X), (int)(yScale * ptIntersect.Y));
 
-				// now reflect vector
-				vecLight = mirrorClosest->Reflect(ptLight, vecLight, ptIntersect);
-				// now set new pt 
-				ptLight = ptIntersect;
-				laser->_vecLight = vecLight;
-				laser->_ptLight = ptLight;
-				SetColor((int)_colorReflection + 1 & 0xffffff);
-				if (_nDelayMsecs > 0)
-				{
-					Sleep(_nDelayMsecs);
-				}
-				if (_nBounces % 1000 == 0)
-				{
-					ShowStatus();
-				}
-				_nBounces++;
+			// now reflect vector
+			_vecLight = mirrorClosest->Reflect(_ptLight, _vecLight, ptIntersect);
+
+
+			// now set new pt 
+			_ptLight = ptIntersect;
+			SetColor((int)_colorReflection + 1 & 0xffffff);
+
+			_nBounces++;
+			if (_nDelayMsecs > 0)
+			{
+				Sleep(_nDelayMsecs);
+			}
+			if (_nBounces % 1000 == 0)
+			{
+				ShowStatus();
 			}
 
 		}
@@ -803,8 +592,6 @@ public:
 		case WM_SIZE:
 		{
 			_frameSize = MAKEPOINTS(lParam);
-			//_frameSize.X = 1000;
-			//_frameSize.Y = 814;
 			_frameSize.Y -= 14; // room for status
 			Clear(/*fKeepUserMirrors=*/false);
 		}
@@ -900,20 +687,26 @@ public:
 				break;
 			case ID_FILE_SLOWER:
 			{
-				if (_nDelayMsecs == 0)
+				int inc = (int)(.5 * _nDelayMsecs);
+				if (inc == 0)
 				{
-					_nDelayMsecs = 1;
+					inc = 1;
 				}
-				else
-				{
-					_nDelayMsecs *= 8;
-				}
+				_nDelayMsecs += inc;
 				ShowStatus();
 			}
 			break;
 			case ID_FILE_FASTER:
 			{
-				_nDelayMsecs /= 8;
+				int inc = (int)(.5 * _nDelayMsecs);
+				if (inc == 0)
+				{
+					inc = 1;
+				}
+				if (_nDelayMsecs > 0)
+				{
+					_nDelayMsecs -= inc;
+				}
 				ShowStatus();
 			}
 			break;
@@ -931,12 +724,11 @@ public:
 					//SelectObject(hDC, oldObj);
 					//ReleaseDC(g_hWnd, hDC);
 					Clear(/*fKeepUserMirrors=*/true);
-					auto xx = dynamic_pointer_cast<CLine>(last);
-					if (xx != nullptr)
+					auto lastLine = dynamic_pointer_cast<CLine>(last);
+					if (lastLine != nullptr)
 					{
-						_ptOldMouseDown = xx->pt1;
+						_ptOldMouseDown = lastLine->pt1;
 					}
-
 					ShowStatus();
 				}
 				break;
@@ -1002,7 +794,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 {
 	UNREFERENCED_PARAMETER(hPrevInstance);
 	UNREFERENCED_PARAMETER(lpCmdLine);
-	DoTest();
 
 	//create an instance of BounceFrame on the stack
 	// that lives until the app exits
