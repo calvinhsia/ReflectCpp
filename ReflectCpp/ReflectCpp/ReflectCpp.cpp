@@ -9,29 +9,27 @@
 #include "stdafx.h"
 #include "ReflectCpp.h"
 #include "windowsx.h"
-#include "vector"
+#include "functional"
 #include "memory"
+#include "vector"
 #include "string"
 #include "atlbase.h"
-//#include "commctrl.h"
-//#pragma comment(lib,"comctl32.lib")
-//#pragma comment(linker,"\"/manifestdependency:type                  = 'win32' \
-//                                              name                  = 'Microsoft.Windows.Common-Controls' \
-//                                              version               = '6.0.0.0' \
-//                                              processorArchitecture = '*' \
-//                                              publicKeyToken        = '6595b64144ccf1df' \
-//                                              language              = '*'\"")
+#define _USE_MATH_DEFINES
+#include "math.h"
+#include <atlbase.h>
+#include <atlwin.h>
+
 using namespace std;
 using namespace ATL;
 
 #define MAX_LOADSTRING 100
 
 // Global Variables:
-HINSTANCE hInst;                                // current instance
+HINSTANCE g_hInstance;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 
-												// Forward declarations of functions included in this code module:
+// Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -40,6 +38,10 @@ class BounceFrame;
 BounceFrame *g_pBounceFrame;
 
 HWND g_hWnd;
+int g_nLasers = 10;
+int g_distBetweenEllipses = 85;
+bool g_ShowEllipsePts = true;
+
 
 //
 //  FUNCTION: MyRegisterClass()
@@ -67,9 +69,10 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 	return RegisterClassExW(&wcex);
 }
 
+
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
-	hInst = hInstance; // Store instance handle in our global variable
+	g_hInstance = hInstance; // Store instance handle in our global variable
 
 	HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
@@ -88,10 +91,16 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 template <typename T> int sgn(T val) {
 	return (T(0) < val) - (val < T(0));
 }
-
 typedef double MyPrecision;
-const double epsilon = .0001;
+const double epsilon = .00001;
 const int SpeedMult = 1000;
+
+MyPrecision square(MyPrecision n)
+{
+	return n * n;
+}
+
+
 class MyPoint
 {
 public:
@@ -145,41 +154,60 @@ public:
 		auto d = sqrt(deltax * deltax + deltay * deltay);
 		return d;
 	}
+	MyPoint Add(MyPoint other)
+	{
+		this->X += other.X;
+		this->Y += other.Y;
+		return *this;
+	}
+
 	MyPrecision X;
 	MyPrecision Y;
 };
 
-typedef MyPoint Vector; // as in physics vector with speed and direction
+void DrawPoint(MyPoint pt)
+{
+	auto hDC = GetDC(g_hWnd);
+	POINT ptPrev;
+	auto pen = CreatePen(0, 2, 0x0);
+
+	MoveToEx(hDC, (int)(pt.X), (int)(pt.Y), &ptPrev);
+	auto old = SelectObject(hDC, pen);
+	int s = 2;
+	Ellipse(hDC, (int)((pt.X - s)), (int)((pt.Y - s)), (int)((pt.X + s)), (int)((pt.Y + s)));
+	// restore
+	SelectObject(hDC, old);
+	MoveToEx(hDC, ptPrev.x, ptPrev.y, &ptPrev);
+	ReleaseDC(g_hWnd, hDC);
+	DeleteObject(pen);
+}
+
+
+typedef MyPoint Vector; // as in physics vector with speed (magnitude) and direction
 
 interface IMirror
 {
-	MyPoint IntersectingPoint(MyPoint ptcLight, Vector vecLight);
-	Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect);
-	void Draw(HDC hDC);
+public:
+	virtual MyPoint IntersectingPoint(MyPoint ptcLight, Vector vecLight) = 0;
+	virtual Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect) = 0;
+	virtual void Draw(HDC hDC) = 0;
+	virtual bool IsNull() = 0;
+	virtual ~IMirror()
+	{
+		// https://blogs.msdn.microsoft.com/calvin_hsia/2018/01/31/store-different-derived-classes-in-collections-in-c-and-c-covariance-shared_ptr-unique_ptr/
+	}
 };
 
-int g_instanceCount = 0;
-class CLine : IMirror
+
+class CLine :
+	public IMirror
 {
 public:
-	CLine()
+	CLine(MyPoint &pt0, MyPoint &pt1, bool IsLimitedInLength = true)
 	{
-		g_instanceCount++;
-	}
-	CLine(MyPoint &pt0, MyPoint &pt1)
-	{
-		g_instanceCount++;
 		this->pt0 = pt0;
 		this->pt1 = pt1;
-	}
-	~CLine()
-	{
-		g_instanceCount--;
-		auto x = 2;
-		this->pt0.X = 0;
-		this->pt0.Y = 0;
-		this->pt1.X = 0;
-		this->pt1.Y = 0;
+		this->IsLimitedInLength = IsLimitedInLength;
 	}
 	MyPrecision LineLength()
 	{
@@ -198,43 +226,49 @@ public:
 		return pt1.Y - pt0.Y;
 	}
 
-	MyPoint InterSectingPoint(MyPoint ptLight, Vector vecLight)
+	MyPoint IntersectingPoint(MyPoint ptLight, Vector vecLight)
 	{
 		MyPoint ptIntersect;
 		CLine lnIncident(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
-		auto ptIntersectTest = InterSectingPoint(lnIncident);
+		auto ptIntersectTest = IntersectingPoint(lnIncident);
 		// the incident line intersects the mirror. Our mirrors have finite width
 		// let's see if the intersection point is within the mirror's edges
 		if (!ptIntersectTest.IsNull())
 		{
-			if (pt0.DistanceFromPoint(ptIntersectTest) +
-				ptIntersectTest.DistanceFromPoint(pt1) - LineLength() < epsilon)
+			if (this->IsLimitedInLength)
 			{
-				if (vecLight.X == 0) // vert
+				if (pt0.DistanceFromPoint(ptIntersectTest) +
+					ptIntersectTest.DistanceFromPoint(pt1) - LineLength() < epsilon)
 				{
-					auto ss = sgn(vecLight.Y);
-					auto s2 = sgn(ptIntersectTest.Y - ptLight.Y);
-					if (ss * s2 == 1) // in our direction?
+					if (abs(vecLight.X) < epsilon) // vert
 					{
-						ptIntersect = ptIntersectTest;
+						auto ss = sgn(vecLight.Y);
+						auto s2 = sgn(ptIntersectTest.Y - ptLight.Y);
+						if (ss * s2 == 1) // in our direction?
+						{
+							ptIntersect = ptIntersectTest;
+						}
 					}
-				}
-				else  // non-vertical
-				{
-					auto ss = sgn(vecLight.X);
-					auto s2 = sgn(ptIntersectTest.X - ptLight.X);
-					if (ss * s2 == 1) // in our direction?
+					else  // non-vertical
 					{
-						ptIntersect = ptIntersectTest;
+						auto ss = sgn(vecLight.X);
+						auto s2 = sgn(ptIntersectTest.X - ptLight.X);
+						if (ss * s2 == 1) // in our direction?
+						{
+							ptIntersect = ptIntersectTest;
+						}
 					}
 				}
 			}
-
+			else
+			{
+				ptIntersect = ptIntersectTest;
+			}
 		}
 		return ptIntersect;
 	}
 
-	MyPoint InterSectingPoint(CLine otherLine)
+	MyPoint IntersectingPoint(CLine otherLine)
 	{
 		MyPoint result;
 		auto denom = (this->pt0.X - this->pt1.X) * (otherLine.pt0.Y - otherLine.pt1.Y) - (this->pt0.Y - this->pt1.Y) * (otherLine.pt0.X - otherLine.pt1.X);
@@ -248,11 +282,11 @@ public:
 
 	Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect)
 	{
-		if (pt0.X == pt1.X) // vertical line
+		if (abs(pt0.X - pt1.X) < epsilon) // vertical line
 		{
 			vecLight.X = -vecLight.X;
 		}
-		else if (pt0.Y == pt1.Y) // horiz line
+		else if (abs(pt0.Y - pt1.Y) < epsilon)// horiz line
 		{
 			vecLight.Y = -vecLight.Y;
 		}
@@ -294,6 +328,12 @@ public:
 		return deltaY() / deltaX();
 	}
 
+	MyPrecision YIntercept()
+	{
+		auto yint1 = pt0.Y - slope() * pt0.X;
+		return yint1;
+	}
+
 	bool LeftHalf(MyPoint c)
 	{
 		auto a = pt0;
@@ -313,18 +353,462 @@ public:
 	}
 	MyPoint pt0;
 	MyPoint pt1;
+	bool IsLimitedInLength;
 };
 
+void DrawLine(CLine line)
+{
+	auto hPen = CreatePen(0, 10, 0xff);
+	auto hDC = GetDC(g_hWnd);
+	POINT ptPrev;
+	MoveToEx(hDC, (int)(line.pt0.X), (int)(line.pt0.Y), &ptPrev);
+	auto old = SelectObject(hDC, hPen);
+	auto res = LineTo(hDC, (int)(line.pt1.X), (int)(line.pt1.Y));
+	// restore
+	SelectObject(hDC, old);
+	MoveToEx(hDC, ptPrev.x, ptPrev.y, &ptPrev);
+	ReleaseDC(g_hWnd, hDC);
+	DeleteObject(hPen);
+}
+
+bool IsVectorInSameDirection(MyPoint ptTest, MyPoint ptLight, Vector vecLight)
+{
+	auto fIsSameDirection = false;
+	if (abs(vecLight.X) < epsilon) // vertical line
+	{
+		if (sgn(ptTest.Y - ptLight.Y) == sgn(vecLight.Y))
+		{
+			fIsSameDirection = true;
+		}
+	}
+	else if (abs(vecLight.Y) < epsilon) // horiz
+	{
+		if (sgn(ptTest.X - ptLight.X) == sgn(vecLight.X))
+		{
+			fIsSameDirection = true;
+		}
+	}
+	else
+	{ // non-vertical. Construct a normal through the ptLight (the ray can extend beyond the test pt)
+		Vector vecNormal(-vecLight.Y, vecLight.X);
+		CLine lnNormal(ptLight, MyPoint(ptLight.X + vecNormal.X, ptLight.Y + vecNormal.Y));
+		//BounceFrame._instance.DrawLine(lnNormal);
+		auto lefthalfTestPt = lnNormal.LeftHalf(ptTest);
+		auto ptvecTip = ptLight.Add(MyPoint(vecLight.X, vecLight.Y));
+		auto lefthalfVectorTip = lnNormal.LeftHalf(ptvecTip);
+		if (!(lefthalfTestPt ^ lefthalfVectorTip)) // xor
+		{
+			fIsSameDirection = true;
+		}
+	}
+	return fIsSameDirection;
+}
+
+
+class CEllipse :
+	public IMirror
+{
+	MyPoint _ptTopLeft;
+	MyPoint _ptBotRight;
+	MyPoint _ptStartArc;
+	MyPoint _ptEndArc;
+	MyPoint _ptonArc;
+public:
+	CEllipse(MyPoint pttopLeft, MyPoint ptbottomRight, MyPoint ptStartArc, MyPoint ptEndArc)
+	{
+		this->_ptTopLeft = pttopLeft;
+		this->_ptBotRight = ptbottomRight;
+		this->_ptStartArc = ptStartArc;
+		this->_ptEndArc = ptEndArc;
+		_ptonArc.X = 0;
+		_ptonArc.Y = 0;
+	}
+	MyPoint Center()
+	{
+		return MyPoint(_ptTopLeft.X + Width() / 2, _ptTopLeft.Y + Height() / 2); ;
+	}
+	double a()
+	{
+		return Width() / 2;
+	}
+	double b()
+	{
+		return Height() / 2;
+	}
+	double f()
+	{
+		return sqrt(abs(a() * a() - b() * b()));
+	}
+	MyPoint Focus1()
+	{
+		if (a() > b())
+		{
+			return MyPoint(Center().X - f(), Center().Y);
+		}
+		return MyPoint(Center().X, Center().Y - f());
+	}
+	MyPoint Focus2()
+	{
+		if (a() > b())
+		{
+			return MyPoint(Center().X + f(), Center().Y);
+		}
+		return MyPoint(Center().X, Center().Y + f());
+	}
+	MyPrecision Width()
+	{
+		return _ptBotRight.X - _ptTopLeft.X;
+	}
+	MyPrecision Height()
+	{
+		return _ptBotRight.Y - _ptTopLeft.X;
+	}
+	bool IsPointInside(MyPoint pt)
+	{
+		auto IsInside = false;
+		auto vx = pt.X - Center().X;
+		auto vy = pt.Y - Center().Y;
+		auto val = vx * vx / (a() * a()) + vy * vy / (b() * b());
+		if (val <= 1 + 100 * epsilon)
+		{
+			IsInside = true;
+		}
+		return IsInside;
+	}
+
+	MyPoint IntersectingPoint(MyPoint ptLight, Vector vecLight)
+	{
+		//BounceFrame._instance.DrawPoint(ptLight);
+		MyPoint  ptIntersectResult;
+		MyPoint  ptIntersect0;
+		MyPoint  ptIntersect1;
+		CLine lnIncident(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
+		//BounceFrame._instance.DrawLine(lnIncident);
+		double A = 0, B = 0, C = 0, m = 0, c = 0;
+		auto Isvertical = abs(vecLight.X) < 10 * epsilon;
+		if (!Isvertical)
+		{
+			m = lnIncident.slope();
+			c = lnIncident.YIntercept();
+			A = b() * b() + a() * a() * m * m;
+			B = 2 * a() * a()* m * (c - Center().Y) - 2 * b() * b() * Center().X;
+			C = b() * b() * Center().X * Center().X + a() * a() * ((c - Center().Y) * (c - Center().Y) - b() * b());
+		}
+		else
+		{
+			A = a() * a();
+			B = -2 * Center().Y * a() * a();
+			C = -a() * a() * b() * b() + b() * b() * (lnIncident.pt0.X - Center().X) * (lnIncident.pt0.X - Center().X);
+		}
+		// quadratic formula (-b +- sqrt(b*b-4ac)/2a
+		auto disc = B * B - 4 * A * C;
+		if (disc > epsilon) // else no intersection (==0 means both points are the same)
+		{
+			auto sqt = sqrt(disc);
+			auto x = (-B + sqt) / (2 * A);
+			// we have >0 intersections.
+			if (!Isvertical)
+			{
+				auto y = m * x + c;
+				ptIntersect0 = MyPoint(x, y);
+				x = (-B - sqt) / (2 * A);
+				y = m * x + c;
+				ptIntersect1 = MyPoint(x, y);
+			}
+			else
+			{
+				//ptIntersect0 = new Point(lnIncident.pt0.X, x);
+				//x = (-B - sqt) / (2 * A);
+				//ptIntersect1 = new Point(lnIncident.pt0.X, x);
+
+				auto y = (b() / a()) * sqrt(a()*a() - square(ptLight.X - Center().X)) + Center().Y;
+				auto y2 = -(b() / a()) * sqrt(a()*a() - square(ptLight.X - Center().X)) + Center().Y;
+				ptIntersect0 = MyPoint(ptLight.X, y);
+				ptIntersect1 = MyPoint(ptLight.X, y2);
+			}
+			// we have 2 pts: choose which one
+			//BounceFrame._instance.DrawLine(lnIncident);
+			//BounceFrame._instance.DrawPoint(ptIntersect0.Value);
+			//BounceFrame._instance.DrawPoint(ptIntersect1.Value);
+			if (!IsCompleteEllipse())
+			{
+				if (!IsPointOnArc(ptIntersect0))
+				{
+					ptIntersect0 = MyPoint(0, 0);
+				}
+				if (!IsPointOnArc(ptIntersect1))
+				{
+					ptIntersect1 = MyPoint(0, 0);
+				}
+			}
+			////is one of the 2 intersections where the light came from?
+			if (!ptIntersect0.IsNull() && ptIntersect0.DistanceFromPoint(ptLight) < 1)
+			{
+				ptIntersect0 = MyPoint(0, 0);
+			}
+			if (!ptIntersect1.IsNull() && ptIntersect1.DistanceFromPoint(ptLight) < 1)
+			{
+				ptIntersect1 = MyPoint(0, 0);
+			}
+			// now determine which point is in the right direction 
+			//(could be both if point started outside ellipse)
+			if (!ptIntersect0.IsNull() &&
+				!IsVectorInSameDirection(ptIntersect0, ptLight, vecLight))
+			{
+				ptIntersect0 = MyPoint(0, 0);
+			}
+			if (!ptIntersect1.IsNull() &&
+				!IsVectorInSameDirection(ptIntersect1, ptLight, vecLight))
+			{
+				ptIntersect1 = MyPoint(0, 0);
+			}
+			if (!ptIntersect0.IsNull())
+			{
+				if (!ptIntersect1.IsNull())// 2 pts still: choose closer
+				{
+					auto dist0 = ptLight.DistanceFromPoint(ptIntersect0);
+					auto dist1 = ptLight.DistanceFromPoint(ptIntersect1);
+					if (dist0 < dist1)
+					{
+						ptIntersectResult = ptIntersect0;
+					}
+					else
+					{
+						ptIntersectResult = ptIntersect1;
+					}
+
+				}
+				else
+				{
+					ptIntersectResult = ptIntersect0;
+				}
+			}
+			else
+			{
+				ptIntersectResult = ptIntersect1;
+			}
+		}
+		if (ptIntersectResult.IsNull())
+		{
+//			_ASSERTE(false);
+			//"no intersection on ellipse?".ToString();
+		}
+		if (!ptIntersectResult.IsNull() && !IsPointInside(ptIntersectResult)) // we said that it intersects at this point, but the point is not in the ellipse. Let's recalc to force it onto ellipse
+		{
+			_ASSERT_EXPR(false, "");
+			//BounceFrame._instance.EraseRect();
+			//BounceFrame._instance.DrawMirrors();
+			//BounceFrame._instance.DrawPoint(ptIntersectResult.Value);
+			//"PtIntersect not on ellipse".ToString();
+//			ptIntersectResult = GetPointOnEllipseClosestToPoint(ptIntersectResult.Value);
+		}
+		return ptIntersectResult;
+	}
+
+	bool IsCompleteEllipse()
+	{
+		return _ptStartArc == _ptEndArc;
+	}
+
+	bool IsPointOnArc(MyPoint pt)
+	{
+		auto result = false;
+		if (IsCompleteEllipse())
+		{
+			result = true;
+		}
+		else
+		{
+			//BounceFrame._instance.DrawPoint(pt);
+			// imagine a straight line between the arc start and arc end pts on the ellipse
+			// the intpoint is either in the same half plane or not as the arcpt
+			CLine lnArcStartEnd(_ptStartArc, _ptEndArc);
+			auto isLeft = lnArcStartEnd.LeftHalf(pt);
+			auto ptArc = GetPointOnArc();
+			auto isPtOnArcLeft = lnArcStartEnd.LeftHalf(ptArc);
+			if (isLeft == isPtOnArcLeft)
+			{
+				result = true;
+			}
+		}
+		return result;
+	}
+	/// <summary>
+	/// To determine if a point is included in the arc of an ellipse
+	/// imagine a line from the start and end arc pts. 
+	/// Get a point in the half plane that includes the arc
+	/// </summary>
+	MyPoint GetPointOnArc()
+	{
+		if (_ptonArc.IsNull())
+		{
+			// default direction of arc is counter clockwise.
+			if (_ptStartArc.X > _ptEndArc.X)
+			{
+				_ptonArc.X = _ptStartArc.X - 1;
+				_ptonArc.Y = _ptStartArc.Y - 1;
+			}
+			else
+			{
+				if (_ptStartArc.X == _ptEndArc.X)
+				{
+					if (_ptStartArc.Y > _ptEndArc.Y)
+					{
+						_ptonArc.X = _ptStartArc.X + 1;
+						_ptonArc.Y = _ptStartArc.Y - 1;
+					}
+					else
+					{
+						_ptonArc.X = _ptStartArc.X - 1;
+						_ptonArc.Y = _ptStartArc.Y - 1;
+					}
+				}
+				else
+				{
+					_ptonArc.X = _ptStartArc.X + 1;
+					_ptonArc.Y = _ptStartArc.Y + 1;
+				}
+			}
+		}
+		return _ptonArc;
+	}
+
+	CLine GetTangentLineAtPoint(MyPoint ptIntersect)
+	{
+		double m = 0;
+		if (abs(ptIntersect.Y - Center().Y) < epsilon) // vertical 
+		{
+			//" the tangent to a vertical line is horizontal (slope = 0)".ToString();
+		}
+		else
+		{
+			// calculate the slope of the tangent line at that point by differentiation
+			m = -b() * b() * (ptIntersect.X - Center().X) / (a()* a()* (ptIntersect.Y - Center().Y));
+		}
+		CLine lnTangent(
+			ptIntersect,
+			MyPoint(ptIntersect.X + SpeedMult,
+				ptIntersect.Y + SpeedMult * m),
+			/*IsLimitedInLength:*/ false // a tangent has infinite length
+		);
+		return lnTangent;
+	}
+
+	Vector Reflect(MyPoint ptLight, Vector vecLight, MyPoint ptIntersect)
+	{
+		// now reflect the light off that tangent line
+		auto lnTangent = GetTangentLineAtPoint(ptIntersect);
+		//BounceFrame._instance.DrawLine(lnTangent);
+		vecLight = lnTangent.Reflect(ptLight, vecLight, ptIntersect);
+		return vecLight;
+	}
+	void Draw(HDC hDC)
+	{
+		Arc(hDC,
+			(int)_ptTopLeft.X, (int)_ptTopLeft.Y,
+			(int)_ptBotRight.X, (int)_ptBotRight.Y,
+			(int)_ptStartArc.X, (int)_ptStartArc.Y,
+			(int)_ptEndArc.X, (int)_ptEndArc.Y
+		);
+		if (g_ShowEllipsePts)
+		{
+			DrawPoint(Center());
+			DrawPoint(Focus1());
+			DrawPoint(Focus2());
+		}
+	}
+	bool IsNull()
+	{
+		return false;
+	}
+};
+
+
+struct Laser
+{
+	Laser(MyPoint pt, Vector vec)
+	{
+		_ptLight = pt;
+		_vecLight = vec;
+	}
+	MyPoint _ptLight;
+	Vector _vecLight;
+};
+
+
+
+class CBounceFrameOptionsDialog : public CDialogImpl<CBounceFrameOptionsDialog>
+{
+public:
+	enum { IDD = IDD_OptionsDialog };
+
+	BEGIN_MSG_MAP(CBounceFrameOptionsDialog)
+		MESSAGE_HANDLER(WM_INITDIALOG, OnInitDialog)
+		COMMAND_ID_HANDLER(IDCANCEL, OnCancel)
+		COMMAND_ID_HANDLER(IDOK, OnOK)
+	END_MSG_MAP()
+	LRESULT OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+	{
+		auto hwnd = GetDlgItem(IDC_EDITNLasers);
+		char buff[1000];
+		sprintf_s(buff, "%d", g_nLasers);
+		SetWindowTextA(hwnd, buff);
+
+		return 0;
+	}
+	LRESULT OnCancel(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled)
+	{
+		EndDialog(wID);
+		return 0;
+	}
+	LRESULT OnOK(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled)
+	{
+		auto hwnd = GetDlgItem(IDC_EDITNLasers);
+		char buff[1000];
+		int nLen = GetWindowTextA(hwnd, buff, sizeof(buff));
+		int num = atoi(buff);
+		if (num > 0)
+		{
+			g_nLasers = num;
+		}
+		EndDialog(wID);
+		return 0;
+	}
+};
+
+// Message handler for about box.
+INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	UNREFERENCED_PARAMETER(lParam);
+	switch (message)
+	{
+	case WM_INITDIALOG:
+		return (INT_PTR)TRUE;
+
+	case WM_COMMAND:
+		if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
+		{
+			EndDialog(hDlg, LOWORD(wParam));
+			return (INT_PTR)TRUE;
+		}
+		break;
+	}
+	return (INT_PTR)FALSE;
+}
 
 class BounceFrame
 {
 	CComAutoCriticalSection csLstMirrors;
 #define LOCKMirrors CComCritSecLock<CComAutoCriticalSection> lock(csLstMirrors)
-	vector<shared_ptr<CLine>> _lstMirrors; // as in a List<MyLine>
+	vector<shared_ptr<IMirror>> _lstMirrors; // as in a List<MyLine>
+
+	vector<shared_ptr<Laser>> _vecLasers;
+
 #define  margin  5
 #define xScale 1
 #define yScale 1
-
+	bool _AddEllipse = true;
+	bool _AddMushrooms = true;
 	MyPoint _frameSize; // size of drawing area
 	HPEN _clrLine;
 	HPEN _clrFillReflection;
@@ -340,22 +824,21 @@ class BounceFrame
 	int _nDelayMsecs = 0;
 	int _nBounces = 0;
 	DWORD _timeStartmSecs;
-	Vector _vecLight;
-	MyPoint _ptLight;
+	Vector _vecLightInit;
+	MyPoint _ptLightInit;
 	int _nOutofBounds;
+	HMENU _hMenu = nullptr;
+	HMENU _hCtxMenu = nullptr;
 public:
 	BounceFrame()
 	{
-		_nPenWidth = 0;
+		_nPenWidth = 1;
 		_hBrushBackGround = CreateSolidBrush(0xffffff);
 		_clrLine = CreatePen(0, _nPenWidth, 0x0);
 		_colorReflection = 0xff;
 		_clrFillReflection = CreatePen(0, _nPenWidth, _colorReflection);
-		//INITCOMMONCONTROLSEX INITCOMMONCONTROLSEX_ = { sizeof(INITCOMMONCONTROLSEX),0 };
-		//if (!InitCommonControlsEx(&INITCOMMONCONTROLSEX_))
-		//{
-		//    _ASSERTE(("initcommonctrls", false));
-		//}
+		_ptLightInit.X = 140;
+		_ptLightInit.Y = 140;
 	}
 	~BounceFrame()
 	{
@@ -391,7 +874,6 @@ private:
 			{
 				line->Draw(hDC);
 			}
-			//            Arc(hDC, 20, 20, 800, 400, 800, 200, 0, 200);
 			ReleaseDC(g_hWnd, hDC);
 		}
 	}
@@ -404,10 +886,10 @@ private:
 	}
 	void ChooseRandomStartingRay()
 	{
-		_ptLight.X = (MyPrecision)(margin + (_frameSize.X - 2 * margin)* ((double)rand()) / RAND_MAX);
-		_ptLight.Y = (MyPrecision)(margin + (_frameSize.Y - 2 * margin)* ((double)rand()) / RAND_MAX);
-		_vecLight.X = 1;
-		_vecLight.Y = (MyPrecision)(((double)rand()) / RAND_MAX);
+		_ptLightInit.X = (MyPrecision)(margin + (_frameSize.X - 2 * margin)* ((double)rand()) / RAND_MAX);
+		_ptLightInit.Y = (MyPrecision)(margin + (_frameSize.Y - 2 * margin)* ((double)rand()) / RAND_MAX);
+		_vecLightInit.X = 1;
+		_vecLightInit.Y = (MyPrecision)(((double)rand()) / RAND_MAX);
 	}
 
 	void Clear(bool fKeepUserMirrors)
@@ -420,21 +902,30 @@ private:
 		_ptOldMouseDown.Clear();
 		_fPenDown = false;
 		_fPenModeDrag = false;
-		_ptLight.X = 140;
-		_ptLight.Y = 140;
-		_vecLight.X = 11;
-		_vecLight.Y = 10;
+		_vecLightInit.X = 11;
+		_vecLightInit.Y = 10;
 		_nBounces = 0;
 		_nOutofBounds = 0;
 		_colorReflection = 0;
+
 		if (!fKeepUserMirrors)
 		{
 			LOCKMirrors;
 			_lstMirrors.clear();
-			_lstMirrors.emplace_back(new CLine(topLeft, topRight));
-			_lstMirrors.emplace_back(new CLine(topRight, botRight));
-			_lstMirrors.emplace_back(new CLine(botRight, botLeft));
-			_lstMirrors.emplace_back(new CLine(botLeft, topLeft));
+			_lstMirrors.push_back(make_shared<CLine>(topLeft, topRight));
+			_lstMirrors.push_back(make_shared<CLine>(topRight, botRight));
+			_lstMirrors.push_back(make_shared<CLine>(botRight, botLeft));
+			_lstMirrors.push_back(make_shared<CLine>(botLeft, topLeft));
+			if (_AddEllipse || !_AddMushrooms)
+			{
+                auto ellipse = make_shared<CEllipse>(
+                    topLeft,
+                    botRight,
+                    MyPoint(0, 0),
+                    MyPoint(0, 0));
+				_lstMirrors.push_back(ellipse);
+                _ptLightInit = ellipse->Center();
+			}
 		}
 		if (g_hWnd != nullptr)
 		{
@@ -452,72 +943,93 @@ private:
 		int nLastBounceWhenStagnant = 0;
 		_timeStartmSecs = GetTickCount();
 		_nOutofBounds = 0;
+		{
+			_vecLasers.clear();
+			for (int i = 0; i < g_nLasers; i++)
+			{
+				auto vec = Vector(_vecLightInit);
+				if (g_nLasers > 1)
+				{
+					auto deltangle = 2 * M_PI / g_nLasers;
+					auto angle = deltangle * i;
+					vec.X = SpeedMult * cos(angle);
+					vec.Y = SpeedMult * sin(angle);
+				}
+				_vecLasers.push_back(make_shared<Laser>(_ptLightInit, vec));
+			}
+		}
 		HDC hDC = GetDC(g_hWnd);
 		while (_fIsRunning && !_fCancelRequest)
 		{
-			//MyPoint ptEndIncident(_ptLight.x + _vecLight.x, _ptLight.y + _vecLight.y);
-			//auto lnIncident = MyLine(_ptLight, ptEndIncident);
-			auto lnIncident = CLine(_ptLight, MyPoint(_ptLight.X + _vecLight.X, _ptLight.Y + _vecLight.Y));
-			auto minDist = 1000000.0;
-			shared_ptr<CLine> mirrorClosest;
-			MyPoint ptIntersect = { 0,0 };
+			for (auto laser : _vecLasers)
 			{
-				LOCKMirrors;
-				for (auto mirror : _lstMirrors)
+				if (_fCancelRequest)
 				{
-					auto ptIntersectTest = mirror->InterSectingPoint(_ptLight, _vecLight);;
-					if (!ptIntersectTest.IsNull())
-					{
-						auto dist = _ptLight.DistanceFromPoint(ptIntersectTest);
+					break;
+				}
+				auto ptLight = laser->_ptLight;
+				auto vecLight = laser->_vecLight;
 
-						if (dist > epsilon && dist < minDist)
+				//MyPoint ptEndIncident(_ptLight.x + _vecLight.x, _ptLight.y + _vecLight.y);
+				//auto lnIncident = MyLine(_ptLight, ptEndIncident);
+				auto lnIncident = CLine(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
+				auto minDist = 1000000.0;
+				shared_ptr<IMirror> mirrorClosest;
+				MyPoint ptIntersect = { 0,0 };
+				{
+					LOCKMirrors;
+					for (auto mirror : _lstMirrors)
+					{
+						auto ptIntersectTest = mirror->IntersectingPoint(ptLight, vecLight);
+						if (!ptIntersectTest.IsNull())
 						{
-							minDist = dist;
-							mirrorClosest = mirror;
-							ptIntersect = ptIntersectTest;
+							auto dist = ptLight.DistanceFromPoint(ptIntersectTest);
+
+							if (dist > epsilon && dist < minDist)
+							{
+								minDist = dist;
+								mirrorClosest = mirror;
+								ptIntersect = ptIntersectTest;
+							}
 						}
 					}
 				}
-			}
-			if (mirrorClosest == nullptr)
-			{
-				if (nLastBounceWhenStagnant == _nBounces)
-				{// both the last bounce and this bounce were stagnant
-					nLastBounceWhenStagnant = _nBounces;
-					_nOutofBounds++;
-					ChooseRandomStartingRay();
-				}
-				else
+				if (mirrorClosest == nullptr)
 				{
-					_vecLight.X = -_vecLight.X;
-					nLastBounceWhenStagnant = _nBounces;
+					if (nLastBounceWhenStagnant == _nBounces)
+					{// both the last bounce and this bounce were stagnant
+						nLastBounceWhenStagnant = _nBounces;
+						_nOutofBounds++;
+						ChooseRandomStartingRay();
+					}
+					else
+					{
+						vecLight.X = -vecLight.X;
+						nLastBounceWhenStagnant = _nBounces;
+					}
+					continue;
 				}
-				continue;
-			}
-			// now draw incident line from orig pt to intersection
-			SelectObject(hDC, _clrFillReflection);
-			if (_nBounces == 1)
-			{
-				MoveToEx(hDC, (int)(xScale * _ptLight.X), (int)(yScale * _ptLight.Y), nullptr);
-			}
-			LineTo(hDC, (int)(xScale * ptIntersect.X), (int)(yScale * ptIntersect.Y));
+				// now draw incident line from orig pt to intersection
+				SelectObject(hDC, _clrFillReflection);
+				MoveToEx(hDC, (int)(xScale * ptLight.X), (int)(yScale * ptLight.Y), nullptr);
+				LineTo(hDC, (int)(xScale * ptIntersect.X), (int)(yScale * ptIntersect.Y));
 
-			// now reflect vector
-			_vecLight = mirrorClosest->Reflect(_ptLight, _vecLight, ptIntersect);
-
-
-			// now set new pt 
-			_ptLight = ptIntersect;
-			SetColor((int)_colorReflection + 1 & 0xffffff);
-
-			_nBounces++;
-			if (_nDelayMsecs > 0)
-			{
-				Sleep(_nDelayMsecs);
-			}
-			if (_nBounces % 1000 == 0)
-			{
-				ShowStatus();
+				// now reflect vector
+				vecLight = mirrorClosest->Reflect(ptLight, vecLight, ptIntersect);
+				// now set new pt 
+				ptLight = ptIntersect;
+				laser->_vecLight = vecLight;
+				laser->_ptLight = ptLight;
+				SetColor((int)_colorReflection + 1 & 0xffffff);
+				if (_nDelayMsecs > 0)
+				{
+					Sleep(_nDelayMsecs);
+				}
+				if (_nBounces % 1000 == 0)
+				{
+					ShowStatus();
+				}
+				_nBounces++;
 			}
 
 		}
@@ -572,7 +1084,8 @@ private:
 		{
 			nBouncesPerSecond = (int)(_nBounces / (nTicks / 1000.0));
 		}
-		ShowStatusMsg(L"Drag %d PenDown %d (%d,%d)-(%d,%d) Delay=%4d #M=%d OOB=%d #Bounces=%-10d # b/sec = %d      ",
+		ShowStatusMsg(L"#Lasers=%d Drag %d PenDown %d (%d,%d)-(%d,%d) Delay=%4d #M=%d OOB=%d #Bounces=%-10d # b/sec = %d      ",
+			g_nLasers,
 			_fPenModeDrag,
 			_fPenDown,
 			(int)_ptOldMouseDown.X, (int)_ptOldMouseDown.Y,
@@ -585,6 +1098,7 @@ private:
 		);
 	}
 public:
+
 	LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	{
 		switch (message)
@@ -596,11 +1110,64 @@ public:
 			Clear(/*fKeepUserMirrors=*/false);
 		}
 		break;
-		case WM_RBUTTONDOWN:
-			_fPenModeDrag = !_fPenModeDrag;
-			_ptOldMouseDown = MAKEPOINTS(lParam);
-			ShowStatus();
+		case WM_CONTEXTMENU:
+		{
+			CancelRunning();
+			auto pos = MAKEPOINTS(lParam);
+			if (_hMenu == nullptr)
+			{
+				_hMenu = LoadMenu(g_hInstance, L"MyContextMenu");
+				_hCtxMenu = GetSubMenu(_hMenu, 0); //skip menu bar to first popup
+			}
+			auto res = TrackPopupMenuEx(_hCtxMenu,
+				TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
+				pos.x, pos.y,
+				g_hWnd, nullptr);
+			switch (res)
+			{
+			case ID_CONTEXT_SETINITIALPOINT:
+			{
+				POINT pt = { pos.x, pos.y };
+				ScreenToClient(hWnd, &pt);
+				_ptLightInit.X = pt.x;
+				_ptLightInit.Y = pt.y;
+				_ptCurrentMouseDown.X = pt.x;
+				_ptCurrentMouseDown.Y = pt.y;
+				ShowStatus();
+			}
 			break;
+			case ID_CONTEXT_TOGGLEDRAGMODE:
+				_fPenModeDrag = !_fPenModeDrag;
+				_ptOldMouseDown = MAKEPOINTS(lParam);
+				ShowStatus();
+				break;
+			case ID_FILE_OPTIONS:
+				SendMessage(hWnd, WM_COMMAND, res, lParam);
+				break;
+			case ID_CONTEXT_ADDELLIPSE:
+				_AddEllipse = !_AddEllipse;
+				Clear(/*fKeepUserMirrors=*/false);
+				break;
+			case ID_CONTEXT_ADDMUSHROOMS:
+				_AddMushrooms = !_AddMushrooms;
+				Clear(/*fKeepUserMirrors=*/false);
+				break;
+			case ID_CONTEXT_SHOWELLIPSEPOINTS:
+				g_ShowEllipsePts = !g_ShowEllipsePts;
+				Clear(/*fKeepUserMirrors=*/false);
+				break;
+			default:
+				break;
+			}
+		}
+		break;
+		case WM_CLOSE:
+			if (_hMenu != nullptr)
+			{
+				DestroyMenu(_hCtxMenu);
+				DestroyMenu(_hMenu);
+			}
+			goto _default;
 		case WM_LBUTTONDOWN:
 			if (_fPenModeDrag)
 			{
@@ -612,7 +1179,7 @@ public:
 				if (!_ptOldMouseDown.IsNull() && _ptOldMouseDown != _ptCurrentMouseDown)
 				{
 					LOCKMirrors;
-					_lstMirrors.emplace_back(new CLine(_ptOldMouseDown, _ptCurrentMouseDown));
+					_lstMirrors.push_back(make_shared<CLine>(_ptOldMouseDown, _ptCurrentMouseDown));
 					DrawMirrors();
 				}
 				_ptOldMouseDown = _ptCurrentMouseDown;
@@ -631,7 +1198,7 @@ public:
 						if (_ptCurrentMouseDown != _ptOldMouseDown)
 						{
 							LOCKMirrors;
-							_lstMirrors.emplace_back(new CLine(_ptOldMouseDown, _ptCurrentMouseDown));
+							_lstMirrors.push_back(make_shared<CLine>(_ptOldMouseDown, _ptCurrentMouseDown));
 							_ptOldMouseDown = _ptCurrentMouseDown;
 							DrawMirrors();
 						}
@@ -662,7 +1229,7 @@ public:
 				if (_ptCurrentMouseDown != _ptOldMouseDown)
 				{
 					LOCKMirrors;
-					_lstMirrors.emplace_back(new CLine(_ptOldMouseDown, _ptCurrentMouseDown));
+					_lstMirrors.push_back(make_shared<CLine>(_ptOldMouseDown, _ptCurrentMouseDown));
 					_ptOldMouseDown = _ptCurrentMouseDown;
 					_fPenDown = false;
 					DrawMirrors();
@@ -687,26 +1254,20 @@ public:
 				break;
 			case ID_FILE_SLOWER:
 			{
-				int inc = (int)(.5 * _nDelayMsecs);
-				if (inc == 0)
+				if (_nDelayMsecs == 0)
 				{
-					inc = 1;
+					_nDelayMsecs = 1;
 				}
-				_nDelayMsecs += inc;
+				else
+				{
+					_nDelayMsecs *= 4;
+				}
 				ShowStatus();
 			}
 			break;
 			case ID_FILE_FASTER:
 			{
-				int inc = (int)(.5 * _nDelayMsecs);
-				if (inc == 0)
-				{
-					inc = 1;
-				}
-				if (_nDelayMsecs > 0)
-				{
-					_nDelayMsecs -= inc;
-				}
+				_nDelayMsecs /= 4;
 				ShowStatus();
 			}
 			break;
@@ -724,16 +1285,24 @@ public:
 					//SelectObject(hDC, oldObj);
 					//ReleaseDC(g_hWnd, hDC);
 					Clear(/*fKeepUserMirrors=*/true);
-					auto lastLine = dynamic_pointer_cast<CLine>(last);
-					if (lastLine != nullptr)
+					auto xx = dynamic_pointer_cast<CLine>(last);
+					if (xx != nullptr)
 					{
-						_ptOldMouseDown = lastLine->pt1;
+						_ptOldMouseDown = xx->pt1;
 					}
+
 					ShowStatus();
 				}
 				break;
+			case ID_FILE_OPTIONS:
+			{
+				CancelRunning();
+				CBounceFrameOptionsDialog dialog;
+				dialog.DoModal(hWnd);
+			}
+			break;
 			case IDM_ABOUT:
-				DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+				DialogBox(g_hInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
 				break;
 			case IDM_EXIT:
 				DestroyWindow(hWnd);
@@ -756,6 +1325,7 @@ public:
 			PostQuitMessage(0);
 			break;
 		default:
+		_default:
 			return DefWindowProc(hWnd, message, wParam, lParam);
 		}
 		return 0;
@@ -767,25 +1337,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	return g_pBounceFrame->WndProc(hWnd, message, wParam, lParam);
 }
 
-// Message handler for about box.
-INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-{
-	UNREFERENCED_PARAMETER(lParam);
-	switch (message)
-	{
-	case WM_INITDIALOG:
-		return (INT_PTR)TRUE;
-
-	case WM_COMMAND:
-		if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
-		{
-			EndDialog(hDlg, LOWORD(wParam));
-			return (INT_PTR)TRUE;
-		}
-		break;
-	}
-	return (INT_PTR)FALSE;
-}
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	_In_opt_ HINSTANCE hPrevInstance,
@@ -824,6 +1375,5 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 			DispatchMessage(&msg);
 		}
 	}
-
 	return (int)msg.wParam;
 }
