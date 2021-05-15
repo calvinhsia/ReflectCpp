@@ -229,7 +229,8 @@ public:
 	MyPoint IntersectingPoint(MyPoint ptLight, Vector vecLight)
 	{
 		MyPoint ptIntersect;
-		CLine lnIncident(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
+		auto pt = MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y);
+		CLine lnIncident(ptLight, pt);
 		auto ptIntersectTest = IntersectingPoint(lnIncident);
 		// the incident line intersects the mirror. Our mirrors have finite width
 		// let's see if the intersection point is within the mirror's edges
@@ -391,7 +392,8 @@ bool IsVectorInSameDirection(MyPoint ptTest, MyPoint ptLight, Vector vecLight)
 	else
 	{ // non-vertical. Construct a normal through the ptLight (the ray can extend beyond the test pt)
 		Vector vecNormal(-vecLight.Y, vecLight.X);
-		CLine lnNormal(ptLight, MyPoint(ptLight.X + vecNormal.X, ptLight.Y + vecNormal.Y));
+		auto pt = MyPoint(ptLight.X + vecNormal.X, ptLight.Y + vecNormal.Y);
+		CLine lnNormal(ptLight, pt);
 		//BounceFrame._instance.DrawLine(lnNormal);
 		auto lefthalfTestPt = lnNormal.LeftHalf(ptTest);
 		auto ptvecTip = ptLight.Add(MyPoint(vecLight.X, vecLight.Y));
@@ -482,7 +484,8 @@ public:
 		MyPoint  ptIntersectResult;
 		MyPoint  ptIntersect0;
 		MyPoint  ptIntersect1;
-		CLine lnIncident(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
+		auto pt = MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y);
+		CLine lnIncident(ptLight, pt);
 		//BounceFrame._instance.DrawLine(lnIncident);
 		double A = 0, B = 0, C = 0, m = 0, c = 0;
 		auto Isvertical = abs(vecLight.X) < 10 * epsilon;
@@ -685,10 +688,11 @@ public:
 			// calculate the slope of the tangent line at that point by differentiation
 			m = -b() * b() * (ptIntersect.X - Center().X) / (a()* a()* (ptIntersect.Y - Center().Y));
 		}
+		auto pt = MyPoint(ptIntersect.X + SpeedMult,
+			ptIntersect.Y + SpeedMult * m);
 		CLine lnTangent(
 			ptIntersect,
-			MyPoint(ptIntersect.X + SpeedMult,
-				ptIntersect.Y + SpeedMult * m),
+			pt,
 			/*IsLimitedInLength:*/ false // a tangent has infinite length
 		);
 		return lnTangent;
@@ -823,7 +827,7 @@ class BounceFrame
 	bool _fCancelRequest = false;
 	int _nDelayMsecs = 0;
 	int _nBounces = 0;
-	DWORD _timeStartmSecs;
+	ULONGLONG _timeStartmSecs;
 	Vector _vecLightInit;
 	MyPoint _ptLightInit;
 	int _nOutofBounds;
@@ -839,6 +843,8 @@ public:
 		_clrFillReflection = CreatePen(0, _nPenWidth, _colorReflection);
 		_ptLightInit.X = 140;
 		_ptLightInit.Y = 140;
+		_nOutofBounds = 0;
+		_timeStartmSecs = 0;
 	}
 	~BounceFrame()
 	{
@@ -886,8 +892,8 @@ private:
 	}
 	void ChooseRandomStartingRay()
 	{
-		_ptLightInit.X = (MyPrecision)(margin + (_frameSize.X - 2 * margin)* ((double)rand()) / RAND_MAX);
-		_ptLightInit.Y = (MyPrecision)(margin + (_frameSize.Y - 2 * margin)* ((double)rand()) / RAND_MAX);
+		_ptLightInit.X = (MyPrecision)(margin + (_frameSize.X - 2.0 * margin)* ((double)rand()) / RAND_MAX);
+		_ptLightInit.Y = (MyPrecision)(margin + (_frameSize.Y - 2.0 * margin)* ((double)rand()) / RAND_MAX);
 		_vecLightInit.X = 1;
 		_vecLightInit.Y = (MyPrecision)(((double)rand()) / RAND_MAX);
 	}
@@ -941,7 +947,7 @@ private:
 	int DoReflecting()
 	{
 		int nLastBounceWhenStagnant = 0;
-		_timeStartmSecs = GetTickCount();
+		_timeStartmSecs = GetTickCount64();
 		_nOutofBounds = 0;
 		{
 			_vecLasers.clear();
@@ -972,7 +978,8 @@ private:
 
 				//MyPoint ptEndIncident(_ptLight.x + _vecLight.x, _ptLight.y + _vecLight.y);
 				//auto lnIncident = MyLine(_ptLight, ptEndIncident);
-				auto lnIncident = CLine(ptLight, MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y));
+				auto pt = MyPoint(ptLight.X + vecLight.X, ptLight.Y + vecLight.Y);
+				auto lnIncident = CLine(ptLight, pt);
 				auto minDist = 1000000.0;
 				shared_ptr<IMirror> mirrorClosest;
 				MyPoint ptIntersect = { 0,0 };
@@ -1079,7 +1086,7 @@ private:
 	void ShowStatus()
 	{
 		int nBouncesPerSecond = 0;
-		DWORD nTicks = GetTickCount() - _timeStartmSecs;
+		auto nTicks = GetTickCount64() - _timeStartmSecs;
 		if (_fIsRunning)
 		{
 			nBouncesPerSecond = (int)(_nBounces / (nTicks / 1000.0));
