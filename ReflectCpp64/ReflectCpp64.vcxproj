@@ -145,14 +145,14 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="ReflectCpp64.rc" />
-  </ItemGroup>
-  <ItemGroup>
-    <Image Include="ReflectCpp64.ico" />
+    <Image Include="..\ReflectCpp\ReflectCpp\ReflectCpp.ico" />
     <Image Include="small.ico" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ReflectCpp\ReflectCpp\ReflectCpp.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\ReflectCpp\ReflectCpp\ReflectCpp.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

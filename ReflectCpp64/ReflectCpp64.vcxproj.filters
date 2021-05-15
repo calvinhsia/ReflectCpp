@@ -29,15 +29,10 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="ReflectCpp64.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
-  </ItemGroup>
-  <ItemGroup>
     <Image Include="small.ico">
       <Filter>Resource Files</Filter>
     </Image>
-    <Image Include="ReflectCpp64.ico">
+    <Image Include="..\ReflectCpp\ReflectCpp\ReflectCpp.ico">
       <Filter>Resource Files</Filter>
     </Image>
   </ItemGroup>
@@ -45,5 +40,10 @@
     <ClCompile Include="..\ReflectCpp\ReflectCpp\ReflectCpp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\ReflectCpp\ReflectCpp\ReflectCpp.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>
